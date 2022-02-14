@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::io::Bytes;
 use std::net::IpAddr;
 use std::str;
 use std::sync::Mutex;
@@ -10,13 +11,27 @@ use serde::{Serialize, Deserialize};
 const PORT: u16 = 3030;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Peer {
+    ip: IpAddr,
+    hostname: String
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Node {
     is_master:  bool,
     cur_master: Option<IpAddr>,
     ip:         IpAddr,
-    peers:      Vec<IpAddr>,
+    peers:      Vec<Peer>,
     hostname:   String,
     latest_sel: Vec<u8>
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SendRequest {
+    ip:       String,
+    hostname: String,
+    #[serde(with = "serde_bytes")]
+    data:     Vec<u8>
 }
 
 pub fn init_node(master: bool) -> Result<Node, Box<dyn Error>> {
@@ -37,9 +52,18 @@ async fn latest(data: web::Data<Mutex<Node>>) -> impl Responder {
     format!("{}\n", str::from_utf8(&node.latest_sel.clone()).unwrap())
 }
 
-#[get("/peers")]
-async fn peers() -> impl Responder {
-    format!("Peers\n")
+#[post("/peers")]
+async fn peers(mut payload: web::Payload, data: web::Data<Mutex<Node>>) -> Result<HttpResponse, Box<dyn Error>>{
+    let mut body: web::BytesMut = web::BytesMut::new();
+    while let Some(chunk) = payload.next().await {
+        let chunk = chunk?;
+        body.extend_from_slice(&chunk);
+    }
+    let peer = serde_json::from_slice::<Peer>(&body)?;
+    println!("{:#?}", peer);
+    let mut node = data.lock().unwrap();
+    node.peers.push(peer);
+    Ok(HttpResponse::Ok().json(&node.peers))
 }
 
 #[post("/send")]
@@ -47,7 +71,6 @@ async fn send(mut payload: web::Payload, data: web::Data<Mutex<Node>>) -> Result
     let mut body: Vec<u8> = Vec::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
-        println!("{:#?}", chunk);
         body.extend_from_slice(&chunk);
     }
     let mut node = data.lock().unwrap();
@@ -58,6 +81,7 @@ async fn send(mut payload: web::Payload, data: web::Data<Mutex<Node>>) -> Result
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let mut node = init_node(true)?;
+    println!("{:#?}", node);
     let data = web::Data::new(Mutex::new(node));
 
     HttpServer::new(move || App::new()

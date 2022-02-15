@@ -80,9 +80,9 @@ impl Node {
     }
 }
 
-#[get("/latest")]
+#[post("/latest")]
 async fn latest(mut payload: web::Payload, data: web::Data<Mutex<Node>>)
-    -> Result<HttpResponse, Box<dyn Error>>{
+    -> Result<HttpResponse, Box<dyn Error>> {
     let mut body: web::BytesMut = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -95,12 +95,12 @@ async fn latest(mut payload: web::Payload, data: web::Data<Mutex<Node>>)
     if !node.peers.contains(&peer) {
         node.peers.push(peer);
     }
-    Ok(HttpResponse::Ok().json(node.latest_sel.clone()))
+    Ok(HttpResponse::Ok().json(str::from_utf8(&node.latest_sel.clone())?))
 }
 
 #[post("/peers")]
 async fn peers(mut payload: web::Payload, data: web::Data<Mutex<Node>>)
-    -> Result<HttpResponse, Box<dyn Error>>{
+    -> Result<HttpResponse, Box<dyn Error>> {
     let mut body: web::BytesMut = web::BytesMut::new();
     while let Some(chunk) = payload.next().await {
         let chunk = chunk?;
@@ -127,6 +127,8 @@ async fn send(mut payload: web::Payload, data: web::Data<Mutex<Node>>)
     }
     let mut node = data.lock().unwrap();
     node.latest_sel = body;
+    println!("{:#?}", str::from_utf8(&node.latest_sel).unwrap());
+
     Ok(HttpResponse::Ok().json(&node.hostname))
 }
 

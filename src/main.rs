@@ -2,12 +2,16 @@ use std::error::Error;
 use std::net::IpAddr;
 use std::str;
 use std::sync::Mutex;
+use std::time::Duration;
+
 use local_ip_address::local_ip;
 use actix_web::{get, post, web, App, HttpServer, Responder, HttpResponse};
-use futures::StreamExt;
+use futures_util::{pin_mut, stream::StreamExt};
+use mdns::{Record, RecordKind};
 use serde::{Serialize, Deserialize};
 
 const PORT: u16 = 3030;
+const MDNS: &'static str = "_http._tcp.local";
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Peer {
@@ -48,6 +52,11 @@ pub fn init_node(master: bool) -> Result<Node, Box<dyn Error>> {
 
 impl Node {
     async fn find_new_master(&mut self) -> Result<IpAddr, Box<dyn Error>> {
+        if self.peers.len() == 0 {
+
+        }
+
+        
 
         Ok(self.ip)
     }
@@ -64,16 +73,20 @@ impl Node {
         }
         Ok(())
     }
-/*
+
     async fn update_peers(&mut self) -> Result<(), Box<dyn Error>> {
-        if !self.cur_master {
-            let res = self.client.post(self.cur_master.unwrap().to_string())
+        let client = reqwest::Client::new();
+        if self.cur_master != None {
+            let res = client.post(self.cur_master.unwrap().to_string())
                 .json(&self).send().await?;
             println!("{:#?}", res);
+            let body = res.text().await?;
+
+            self.peers = serde_json::from_str(&body).expect("Could not deserialize");
         }
         Ok(())
     }
-*/
+
     async fn send_sel(&mut self, data: Vec<u8>) -> Result<(), Box<dyn Error>> {
 
         Ok(())
@@ -134,6 +147,21 @@ async fn send(mut payload: web::Payload, data: web::Data<Mutex<Node>>)
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let stream = mdns::discover::all(MDNS, Duration::from_secs(15))?.listen();
+    pin_mut!(stream);
+
+    while let Some(Ok(response)) = stream.next().await {
+        let addr = response.records()
+            .filter_map(self::to_ip_addr)
+            .next();
+
+        if let Some(addr) = addr {
+            println!("found device at {}", addr);
+        } else {
+            println!("device does not advertise address");
+        }
+    }
+
     let mut node = init_node(true)?;
     println!("{:#?}", node);
 
@@ -147,4 +175,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     ).bind(("127.0.0.1", PORT))?.run().await;
 
     Ok(())
+}
+
+fn to_ip_addr(record: &Record) -> Option<IpAddr> {
+    match record.kind {
+        RecordKind::A(addr) => Some(addr.into()),
+        RecordKind::AAAA(addr) => Some(addr.into()),
+        _ => None,
+    }
 }
